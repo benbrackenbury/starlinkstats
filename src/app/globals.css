@@ -1301,6 +1301,11 @@ td .note {
   background: var(--shell-97);
 }
 
+.track-swatch[data-shell="other"],
+.shell-stack span[data-shell="other"] {
+  background: var(--muted);
+}
+
 #shells .track-swatch {
   width: 0.7rem;
   height: 0.7rem;
