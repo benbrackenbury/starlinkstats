@@ -5,24 +5,18 @@ import { OutlookPanel } from "@/components/OutlookPanel";
 import { ScrollProgress } from "@/components/ScrollProgress";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { TrainSightingsPanel } from "@/components/TrainSightingsPanel";
-import {
-  constellation,
-  coverage,
-  directToCell,
-  finance,
-  launches,
-  shells,
-  type Source,
-} from "@/data/stats";
+import { coverage, directToCell, finance, type Source } from "@/data/stats";
 import {
   formatCount,
   formatLaunchWhen,
   formatUtcDay,
 } from "@/lib/format";
 import { getGroundTracks, SHELLS, type ShellId } from "@/lib/groundTracks";
+import { loadCensus, loadLaunches, tickCounts } from "@/lib/live-stats";
 import { oneParam } from "@/lib/query";
 
 export const dynamic = "force-static";
+export const revalidate = 3600;
 
 function Brand({ children = "Starlink" }: { children?: string }) {
   return <span translate="no">{children}</span>;
@@ -130,18 +124,24 @@ export default async function HomePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const query = await searchParams;
-  const groundTracks = getGroundTracks();
+  const [census, launchList, groundTracks] = await Promise.all([
+    loadCensus(),
+    loadLaunches(),
+    getGroundTracks(),
+  ]);
   const compiled = new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "long",
     year: "numeric",
     timeZone: "Europe/London",
   }).format(new Date());
-  const shareTicks = [
-    { id: "v1", n: 8, label: "V1" },
-    { id: "v2", n: 20, label: "V2 Mini" },
-    { id: "v3", n: 1, label: "V3" },
-  ];
+  const shellRows = census.shells.filter((row) => row.inOrbit > 0);
+  const tickSizes = tickCounts(census.versions.map((row) => row.inOrbit));
+  const shareTicks = census.versions.flatMap((row, index) =>
+    tickSizes[index] > 0
+      ? [{ id: row.id, n: tickSizes[index], label: row.short }]
+      : [],
+  );
   const shellsParam = oneParam(query.shells);
   const initialShells = Object.fromEntries(
     SHELLS.map((shell) => [
@@ -174,10 +174,10 @@ export default async function HomePage({
         <section className="hero" id="orbit">
           <p className="kicker">Satellites in Orbit</p>
           <div className="hero-figure">
-            <Odometer value={constellation.totalInOrbit} />
+            <Odometer value={census.totalInOrbit} />
           </div>
           <p className="sub">
-            {formatCount(constellation.totalWorking)} working
+            {formatCount(census.totalWorking)} working
           </p>
           <div className="tick-ruler" aria-hidden="true">
             {shareTicks.flatMap((group, gi) => {
@@ -211,7 +211,7 @@ export default async function HomePage({
         <section id="version">
           <h2>By Version</h2>
           <ul className="task-list version-list">
-            {constellation.versions.map((row) => (
+            {census.versions.map((row) => (
               <li key={row.name} className="task-row">
                 <span className="task-mark is-dot" aria-hidden="true" />
                 <div className="task-copy">
@@ -231,19 +231,19 @@ export default async function HomePage({
               </li>
             ))}
           </ul>
-          <SourceLine {...constellation.source} />
-          <SourceLine {...constellation.sourceV3} />
+          <SourceLine {...census.source} />
+          {census.extraSources.map((source) => (
+            <SourceLine key={source.url} {...source} />
+          ))}
         </section>
 
         <section id="shells">
           <h2>Inclination Shells</h2>
           <p className="sub">
-            Same four inclination bins as the ground-track colours. Counts are
-            McDowell’s planes grouped to those bins; they sum to the in-orbit
-            total above.
+            {census.shellIntro}
           </p>
           <div className="shell-stack" aria-hidden="true">
-            {shells.rows.map((row) => (
+            {shellRows.map((row) => (
               <span
                 key={row.id}
                 data-shell={row.id}
@@ -252,12 +252,12 @@ export default async function HomePage({
             ))}
           </div>
           <ul className="task-list version-list">
-            {shells.rows.map((row) => (
+            {shellRows.map((row) => (
               <li key={row.id} className="task-row">
                 <span className="track-swatch" data-shell={row.id} />
                 <div className="task-copy">
                   <p className="task-title">
-                    {row.name} · {row.altitude}
+                    {row.altitude ? `${row.name} · ${row.altitude}` : row.name}
                   </p>
                   <p className="task-meta">{row.note}</p>
                 </div>
@@ -270,7 +270,7 @@ export default async function HomePage({
               </li>
             ))}
           </ul>
-          <SourceLine {...shells.source} />
+          <SourceLine {...census.shellSource} />
         </section>
 
         <section id="tracks">
@@ -313,18 +313,18 @@ export default async function HomePage({
           <h2>Launch History</h2>
           <LaunchGroup
             title="Upcoming"
-            rows={launches.upcoming}
+            rows={launchList.upcoming}
             done={false}
             empty="No upcoming Starlink launches in this list. Check the source for a new NET date."
           />
-          <SourceLine {...launches.upcomingSource} />
+          <SourceLine {...launchList.upcomingSource} />
           <LaunchGroup
             title="Recent"
-            rows={launches.recent}
+            rows={launchList.recent}
             done
             empty="No recent Starlink launches in this list. Check the source for new missions."
           />
-          <SourceLine {...launches.source} />
+          <SourceLine {...launchList.source} />
         </section>
 
         <section id="finance">

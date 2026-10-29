@@ -5,6 +5,7 @@ export type Source = {
   publishedNote?: string;
 };
 
+// Saved copy used only when McDowell or Launch Library cannot be read.
 export const constellation = {
   totalInOrbit: 11119,
   totalWorking: 11078,

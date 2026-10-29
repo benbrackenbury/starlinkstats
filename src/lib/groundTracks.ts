@@ -166,17 +166,70 @@ function trackForOmm(omm: OMMJsonObject): GroundTrack | null {
   };
 }
 
-export function getGroundTracks(): GroundTrackSet {
-  const tracks = (sample.objects as OMMJsonObject[])
+const TRACK_UA = "starlink-dashboard/0.1 (ground tracks)";
+
+async function oneFreshObject(saved: OMMJsonObject) {
+  try {
+    const res = await fetch(
+      `https://celestrak.org/NORAD/elements/gp.php?CATNR=${saved.NORAD_CAT_ID}&FORMAT=JSON`,
+      {
+        headers: { "User-Agent": TRACK_UA, Accept: "application/json" },
+        next: { revalidate: 60 * 60 },
+      },
+    );
+    if (!res.ok) {
+      console.error(`CelesTrak GP ${saved.NORAD_CAT_ID} HTTP ${res.status}`);
+      return null;
+    }
+    const body = (await res.json()) as OMMJsonObject[];
+    const row = Array.isArray(body) ? body[0] : null;
+    if (!row || Number(row.NORAD_CAT_ID) !== Number(saved.NORAD_CAT_ID)) {
+      console.error(`CelesTrak GP ${saved.NORAD_CAT_ID} did not match.`);
+      return null;
+    }
+    return row;
+  } catch (error) {
+    console.error(
+      `CelesTrak GP ${saved.NORAD_CAT_ID} failed.`,
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
+async function freshSampleObjects() {
+  const saved = sample.objects as OMMJsonObject[];
+  const rows = await Promise.all(saved.map((omm) => oneFreshObject(omm)));
+  if (rows.some((row) => row === null)) return null;
+  return rows as OMMJsonObject[];
+}
+
+function tracksFrom(objects: OMMJsonObject[]) {
+  return objects
     .map(trackForOmm)
     .filter((track): track is GroundTrack => track !== null);
+}
+
+export async function getGroundTracks(): Promise<GroundTrackSet> {
+  const saved = sample.objects as OMMJsonObject[];
+  const fresh = await freshSampleObjects();
+  const freshTracks = fresh ? tracksFrom(fresh) : [];
+  const usedFresh = fresh !== null && freshTracks.length === fresh.length;
+  const fetchedAt = new Date();
 
   return {
-    fetchedUtc: sample.fetchedUtc,
-    fetchedLabel: sample.fetchedLabel,
+    fetchedUtc: usedFresh ? fetchedAt.toISOString() : sample.fetchedUtc,
+    fetchedLabel: usedFresh
+      ? new Intl.DateTimeFormat("en-GB", {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+          timeZone: "UTC",
+        }).format(fetchedAt)
+      : sample.fetchedLabel,
     sourceLabel: sample.sourceLabel,
     sourceUrl: sample.sourceUrl,
     subsetNote: sample.subsetNote,
-    tracks,
+    tracks: usedFresh ? freshTracks : tracksFrom(saved),
   };
 }
